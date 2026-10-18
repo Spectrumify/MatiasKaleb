@@ -603,3 +603,7 @@ callLink.textContent = `Call ${EMERGENCY_NUMBER}`;
 
 window.addEventListener("hashchange", route);
 route();
+
+// Offline support (sw.js). The app still works if this fails, for example
+// when index.html is opened as a file.
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
