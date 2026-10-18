@@ -1,6 +1,6 @@
 {
-  "name": "Injury Response",
-  "short_name": "Injury Response",
+  "name": "Sauron Injury Response",
+  "short_name": "Sauron",
   "description": "Prototype that guides a coach through a suspected concussion and keeps an incident record.",
   "start_url": "./",
   "scope": "./",
