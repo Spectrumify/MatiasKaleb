@@ -19,6 +19,17 @@ The camera needs a secure page. It works from `localhost` or an `https://` addre
 
 Every change merged into `main` goes live within a few minutes. Close and reopen the app to get it.
 
+## Offline use
+
+After the app has been opened once with signal, it also opens with no signal. `sw.js` (a service worker) keeps a copy of the app files on the phone.
+
+How updates work:
+
+- With signal, the app always asks GitHub for the newest files first and saves them as the new copy. There is no version number to bump. Merge, wait for Pages, then close and reopen the app as before.
+- With no signal, or if the network takes more than 3 seconds, the app opens from the saved copy. It picks up the newest version next time it opens with signal.
+- If you add a new file the app needs, such as a new script, add its path to the `FILES` list at the top of `sw.js` so it is saved for offline use.
+- Incident records are not part of this copy and are never touched by updates.
+
 ## Test it
 
 Open `tests/index.html`. It runs checks on the result rules, the reports and storage, and lists anything that fails. Run it after every change to `js/`.
@@ -33,6 +44,7 @@ Open `tests/index.html`. It runs checks on the result rules, the reports and sto
 | `js/reports.js` | Builds the report text for each type of recipient. |
 | `js/app.js` | Screens, navigation and form handling. |
 | `css/styles.css` | Styles. |
+| `sw.js` | Service worker that saves the app files so the app opens offline. |
 | `tests/` | The test page. |
 
 ## What works and what doesn't
