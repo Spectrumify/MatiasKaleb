@@ -18,6 +18,8 @@ const FILES = [
   "index.html",
   "css/styles.css",
   "js/protocols/concussion.js",
+  "js/walk.js",
+  "js/pose.js",
   "js/assessment.js",
   "js/records.js",
   "js/reports.js",

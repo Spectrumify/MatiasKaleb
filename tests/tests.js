@@ -16,7 +16,7 @@ function assert(condition, message) {
 }
 
 const protocol = CONCUSSION_PROTOCOL;
-const ALL_CHECKED = { danger: true, signs: true, symptoms: true, memory: true };
+const ALL_CHECKED = { danger: true, signs: true, symptoms: true, memory: true, walk: true };
 
 function incidentWith(changes) {
   return Object.assign(newIncident("concussion"), { checked: { ...ALL_CHECKED } }, changes);
@@ -97,7 +97,7 @@ test("sections that were skipped are reported as a limitation", () => {
   const result = assessIncident(incidentWith({ checked: { danger: true } }), protocol);
   const note = result.limitations.find((l) => l.startsWith("Not completed"));
   assert(note && note.includes("Symptoms") && note.includes("Memory questions"), `got ${note}`);
-  assert(result.incomplete.length === 3, `expected 3 incomplete sections, got ${result.incomplete.length}`);
+  assert(result.incomplete.length === 4, `expected 4 incomplete sections, got ${result.incomplete.length}`);
 });
 
 test("asking no memory questions is reported as a limitation", () => {
@@ -108,6 +108,111 @@ test("asking no memory questions is reported as a limitation", () => {
 test("every result includes the fixed limitations", () => {
   const result = assessIncident(incidentWith({ symptoms: ["headache"] }), protocol);
   protocol.limitations.forEach((l) => assert(result.limitations.includes(l), `missing: ${l}`));
+});
+
+// Tandem walk analysis, using made-up skeletons of a player seen from the front.
+
+function bodyFrame(t, { lean = 0, spread = 0.2, shoulders = 0.7, hipToAnkle = 1.8, visibility = 0.9 } = {}) {
+  const torso = 0.2;
+  const hip = { x: 0.5, y: 0.4 };
+  const angle = (lean * Math.PI) / 180;
+  const shoulder = { x: hip.x + torso * Math.sin(angle), y: hip.y - torso * Math.cos(angle) };
+  const ankleY = hip.y + hipToAnkle * torso;
+  const landmarks = Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, visibility }));
+  const set = (i, x, y) => (landmarks[i] = { x, y, visibility });
+  set(11, shoulder.x - (shoulders * torso) / 2, shoulder.y);
+  set(12, shoulder.x + (shoulders * torso) / 2, shoulder.y);
+  set(23, hip.x - 0.03, hip.y);
+  set(24, hip.x + 0.03, hip.y);
+  set(27, hip.x - (spread * torso) / 2, ankleY);
+  set(28, hip.x + (spread * torso) / 2, ankleY);
+  return { t, landmarks };
+}
+
+// About 30 frames a second. shape(t) changes the body at time t.
+function walkFrames(ms, shape = () => ({})) {
+  const frames = [];
+  for (let t = 0; t <= ms; t += 33) frames.push(bodyFrame(t, shape(t)));
+  return frames;
+}
+
+const during = (from, to, change) => (t) => (t >= from && t <= to ? change : {});
+
+test("a steady walk raises no flags", () => {
+  const walk = analyzeWalk(walkFrames(4000), 1);
+  assert(walk.reliable, "expected a reliable result");
+  assert(walk.stumbles === 0 && walk.swayEpisodes === 0 && walk.falls === 0, JSON.stringify(walk));
+  assert(walkFindings(walk).length === 0, "expected no findings");
+});
+
+test("a foot stepping off the line for 300 ms counts as a stumble", () => {
+  const walk = analyzeWalk(walkFrames(4000, during(1000, 1300, { spread: 0.9 })), 1);
+  assert(walk.stumbles === 1, `got ${walk.stumbles}`);
+});
+
+test("a two-frame tracking jitter is not a stumble", () => {
+  const walk = analyzeWalk(walkFrames(4000, during(1000, 1066, { spread: 0.9 })), 1);
+  assert(walk.stumbles === 0, `got ${walk.stumbles}`);
+});
+
+test("leaning 25 degrees sideways for half a second counts as sway, not a fall", () => {
+  const walk = analyzeWalk(walkFrames(4000, during(1000, 1500, { lean: 25 })), 1);
+  assert(walk.swayEpisodes === 1, `sway ${walk.swayEpisodes}`);
+  assert(walk.falls === 0, `falls ${walk.falls}`);
+  assert(walk.maxLeanDeg === 25, `max lean ${walk.maxLeanDeg}`);
+});
+
+test("the trunk going past 50 degrees counts as a fall", () => {
+  const walk = analyzeWalk(walkFrames(4000, during(1000, 1500, { lean: 70 })), 1);
+  assert(walk.falls === 1, `got ${walk.falls}`);
+});
+
+test("hips dropping toward the ground counts as a fall", () => {
+  const walk = analyzeWalk(walkFrames(4000, during(2000, 2600, { hipToAnkle: 0.5 })), 1);
+  assert(walk.falls === 1, `got ${walk.falls}`);
+});
+
+test("feet spreading while turning around is not a stumble", () => {
+  const shape = (t) => ({
+    ...(t >= 1400 && t <= 2000 ? { shoulders: 0.1 } : {}),
+    ...(t >= 1300 && t <= 2100 ? { spread: 1.0 } : {}),
+  });
+  const walk = analyzeWalk(walkFrames(4000, shape), 1);
+  assert(walk.stumbles === 0, `got ${walk.stumbles}`);
+});
+
+test("a walk where the player is mostly out of view is marked unreliable", () => {
+  const frames = walkFrames(4000).map((f, i) => (i % 3 === 0 ? f : { t: f.t, landmarks: null }));
+  const walk = analyzeWalk(frames, 1);
+  assert(!walk.reliable, `tracked ${walk.trackedPercent}%`);
+});
+
+test("body points the tracker is unsure about are not used", () => {
+  assert(!isPlayerInView(bodyFrame(0, { visibility: 0.3 }).landmarks, 1), "low visibility frame was used");
+  assert(isPlayerInView(bodyFrame(0).landmarks, 1), "clear frame was not used");
+});
+
+test("a flagged walk makes the result 'concussion suspected'", () => {
+  const walk = analyzeWalk(walkFrames(4000, during(1000, 1300, { spread: 0.9 })), 1);
+  const result = assessIncident(incidentWith({ walk }), protocol);
+  assert(result.level === "suspected", `got ${result.level}`);
+  assert(result.indicators.some((i) => i.section === "Tandem walk (camera)"), "walk not listed as a reason");
+});
+
+test("a clean walk never lowers the result", () => {
+  const walk = analyzeWalk(walkFrames(4000), 1);
+  const suspected = assessIncident(incidentWith({ walk, symptoms: ["headache"] }), protocol);
+  assert(suspected.level === "suspected", `got ${suspected.level}`);
+  const emergency = assessIncident(incidentWith({ walk, redFlags: ["seizure"] }), protocol);
+  assert(emergency.level === "emergency", `got ${emergency.level}`);
+});
+
+test("an unreliable or skipped walk is reported as a limitation", () => {
+  const frames = walkFrames(4000).map((f, i) => (i % 3 === 0 ? f : { t: f.t, landmarks: null }));
+  const unreliable = assessIncident(incidentWith({ walk: analyzeWalk(frames, 1) }), protocol);
+  assert(unreliable.limitations.some((l) => l.includes("could not track")), "missing tracking limitation");
+  const skipped = assessIncident(incidentWith({}), protocol);
+  assert(skipped.limitations.includes("The tandem walk was not done."), "missing skipped limitation");
 });
 
 // Reports
@@ -134,6 +239,7 @@ test("medical report has observations, timeline and limitations", () => {
   assert(report.includes("Where are we playing today? (Incorrect)"), "missing memory answer");
   assert(report.includes("Timeline") && report.includes("Removed from play"), "missing timeline");
   assert(report.includes(protocol.limitations[2]), "missing limitations");
+  assert(report.includes("Tandem walk (camera, experimental)") && report.includes("Not done"), "missing walk section");
 });
 
 test("team staff report leaves out symptoms and gives return-to-play status", () => {

@@ -9,6 +9,7 @@ const STEPS = [
   { id: "signs", title: "Visible signs" },
   { id: "symptoms", title: "Symptoms" },
   { id: "memory", title: "Memory questions" },
+  { id: "walk", title: "Tandem walk" },
   { id: "result", title: "Result and next steps" },
   { id: "details", title: "Incident details" },
 ];
@@ -118,8 +119,9 @@ function aboutView() {
     <h1>About this prototype</h1>
     <p>This is a hackathon prototype, not a medical device. It cannot diagnose a concussion or rule one out,
       and it does not replace emergency services or a healthcare professional.</p>
-    <p>The result comes from simple rules applied to what you tick. The camera view is a preview only:
-      no video is recorded, saved or analyzed.</p>
+    <p>The result comes from simple rules applied to what you record. The tandem walk uses the camera to track
+      the player's body on this phone. Video is never recorded, saved or uploaded; only the measurements are kept.
+      The walk check is experimental and its limits are first guesses.</p>
     <p>Records are stored only in this browser. Clearing your browser data deletes them.</p>
     <p>Guidance adapted from:</p>
     ${list(CONCUSSION_PROTOCOL.sources)}
@@ -144,6 +146,7 @@ function stepView(step, incident, protocol) {
     signs: signsStep,
     symptoms: symptomsStep,
     memory: memoryStep,
+    walk: walkStep,
     result: resultStep,
     details: detailsStep,
   }[step.id](incident, protocol);
@@ -205,13 +208,44 @@ function memoryStep(incident, protocol) {
 
   return `
     <p>${esc(protocol.memoryNote)}</p>
-    <div class="camera">
-      <button class="btn" data-action="camera">Turn on camera</button>
-      <p class="hint">Preview only. Video is not recorded, saved or analyzed in this prototype.</p>
-      <p class="hint" data-camera-status role="status"></p>
-      <video data-camera autoplay muted playsinline hidden></video>
-    </div>
     <ol class="questions">${protocol.memoryQuestions.map(question).join("")}</ol>`;
+}
+
+function walkStep(incident, protocol) {
+  const test = protocol.walkTest;
+  return `
+    <p>${esc(test.intro)}</p>
+    <p class="warning">${esc(test.safety)}</p>
+    <h2>Set up</h2>
+    ${list(test.setup)}
+    <h2>The walk</h2>
+    <ol>${test.steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>
+    <div class="walk">
+      <div class="walk-view" data-walk-view hidden>
+        <video data-walk-video muted playsinline></video>
+        <canvas data-walk-canvas></canvas>
+      </div>
+      <p class="walk-status" data-walk-status role="status"></p>
+      <div class="button-row">
+        <button class="btn btn-primary" data-action="walk-camera">${incident.walk ? "Redo the walk" : "Turn on camera"}</button>
+        <button class="btn btn-primary" data-action="walk-start" hidden>Start walk</button>
+        <button class="btn btn-primary" data-action="walk-stop" hidden>Stop</button>
+      </div>
+    </div>
+    <div data-walk-result>${incident.walk ? walkResult(incident.walk) : ""}</div>
+    <p class="hint">You can skip this step. Video is never recorded, saved or uploaded.</p>`;
+}
+
+function walkResult(walk) {
+  const findings = walkFindings(walk);
+  return `
+    <h2>Walk result</h2>
+    ${findings.length > 0
+      ? `<p>The camera picked up:</p>${list(findings)}<p>This counts toward a suspected concussion.</p>`
+      : "<p>The camera did not pick up a stumble, large sway or fall. This does not rule out a concussion.</p>"}
+    ${walk.reliable ? "" : `<p class="error">The camera could not track the player well. Try again with their whole body in view and better light.</p>`}
+    <p class="hint">Walk time ${walk.durationSec} seconds. Player tracked ${walk.trackedPercent}% of the time.
+      Largest sideways lean ${walk.maxLeanDeg} degrees.</p>`;
 }
 
 function resultBanner(result, protocol) {
@@ -375,6 +409,8 @@ function recordView(incident, protocol) {
     <ul>
       ${protocol.memoryQuestions.map((q) => `<li>${esc(q.text)} <strong>${memoryAnswerLabel(incident.memory[q.id])}</strong></li>`).join("")}
     </ul>
+    ${heading("Tandem walk (camera, experimental)", "walk")}
+    ${incident.walk ? list(describeWalk(incident.walk)) : `<p class="muted">${incident.checked.walk ? "Not done." : "Not checked."}</p>`}
 
     ${heading("Actions and timeline", "result")}
     <ol class="timeline">
@@ -504,38 +540,138 @@ async function shareReport() {
   }
 }
 
-async function toggleCamera(button) {
-  const video = view.querySelector("[data-camera]");
-  const status = view.querySelector("[data-camera-status]");
-  if (cameraStream) {
-    stopCamera();
-    video.hidden = true;
-    button.textContent = "Turn on camera";
-    return;
-  }
+// Tandem walk recording. Only the tracked body points are kept in memory while
+// recording; the video itself is never stored.
+
+const WALK_MAX_MS = 60000;
+const walkRun = { active: false, recording: false, frames: [], startedAt: 0, lastVideoTime: -1, timer: null };
+
+function walkElements() {
+  const get = (name) => view.querySelector(`[data-${name}]`);
+  return {
+    viewBox: get("walk-view"),
+    video: get("walk-video"),
+    canvas: get("walk-canvas"),
+    status: get("walk-status"),
+    result: get("walk-result"),
+    cameraButton: view.querySelector('[data-action="walk-camera"]'),
+    startButton: view.querySelector('[data-action="walk-start"]'),
+    stopButton: view.querySelector('[data-action="walk-stop"]'),
+  };
+}
+
+async function walkCamera(button) {
+  const el = walkElements();
   if (!navigator.mediaDevices?.getUserMedia) {
-    status.textContent = "This browser can't open the camera here. You can do the check without it.";
+    el.status.textContent = "This browser can't open the camera here. You can skip this step.";
     return;
   }
   button.disabled = true;
   try {
-    cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
-    // The coach may have left this step while the permission prompt was open.
-    if (!view.contains(video)) return stopCamera();
-    video.srcObject = cameraStream;
-    video.hidden = false;
-    button.textContent = "Turn off camera";
-    status.textContent = "";
-  } catch (err) {
-    status.textContent = err.name === "NotAllowedError"
-      ? "Camera permission was denied. You can do the check without it."
-      : "Couldn't start the camera. You can do the check without it.";
+    el.status.textContent = "Loading body tracking. The first time, this downloads about 17 MB.";
+    let pose;
+    try {
+      pose = await loadPoseTracker();
+    } catch {
+      el.status.textContent = "Couldn't load body tracking. It needs an internet connection the first time. You can skip this step.";
+      return;
+    }
+    // The coach may have left this step while it was loading.
+    if (!view.contains(el.video)) return;
+
+    try {
+      cameraStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false,
+      });
+    } catch (err) {
+      el.status.textContent = err.name === "NotAllowedError"
+        ? "Camera permission was denied. You can skip this step."
+        : "Couldn't start the camera. You can skip this step.";
+      return;
+    }
+    if (!view.contains(el.video)) return stopCamera();
+
+    el.video.srcObject = cameraStream;
+    try {
+      await el.video.play();
+    } catch {
+      stopCamera();
+      el.status.textContent = "Couldn't start the camera. You can skip this step.";
+      return;
+    }
+    el.viewBox.hidden = false;
+    button.hidden = true;
+    el.startButton.hidden = false;
+    Object.assign(walkRun, { active: true, recording: false, frames: [], lastVideoTime: -1 });
+    trackFrame(pose, el);
   } finally {
     button.disabled = false;
   }
 }
 
+function trackFrame(pose, el) {
+  if (!walkRun.active) return;
+  const { video, canvas, status } = el;
+  if (video.readyState >= 2 && video.currentTime !== walkRun.lastVideoTime) {
+    walkRun.lastVideoTime = video.currentTime;
+    if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+    }
+    const now = performance.now();
+    let landmarks;
+    try {
+      landmarks = pose.landmarker.detectForVideo(video, now).landmarks[0] || null;
+    } catch {
+      stopCamera();
+      status.textContent = "Body tracking stopped working. You can skip this step.";
+      return;
+    }
+    drawSkeleton(canvas, landmarks, pose.connections);
+
+    if (walkRun.recording) {
+      walkRun.frames.push({ t: now, landmarks: landmarks && landmarks.map(({ x, y, visibility }) => ({ x, y, visibility })) });
+      const seconds = Math.floor((now - walkRun.startedAt) / 1000);
+      status.textContent = `Recording, ${seconds} s. Tap Stop when they have walked back.`;
+    } else {
+      status.textContent = isPlayerInView(landmarks, video.videoWidth / video.videoHeight)
+        ? "Player in view. Tap Start walk when they are ready."
+        : "Get the player's whole body in view, feet included.";
+    }
+  }
+  requestAnimationFrame(() => trackFrame(pose, el));
+}
+
+function walkStart(button) {
+  const el = walkElements();
+  Object.assign(walkRun, { recording: true, frames: [], startedAt: performance.now() });
+  walkRun.timer = setTimeout(walkStop, WALK_MAX_MS);
+  button.hidden = true;
+  el.stopButton.hidden = false;
+}
+
+function walkStop() {
+  if (!walkRun.recording) return;
+  const el = walkElements();
+  walkRun.recording = false;
+  const aspect = el.video.videoWidth / el.video.videoHeight || 1;
+  current.walk = { ...analyzeWalk(walkRun.frames, aspect), completedAt: new Date().toISOString() };
+  persist();
+  stopCamera();
+
+  el.viewBox.hidden = true;
+  el.stopButton.hidden = true;
+  el.cameraButton.hidden = false;
+  el.cameraButton.textContent = "Redo the walk";
+  el.status.textContent = "";
+  el.result.innerHTML = walkResult(current.walk);
+  el.result.scrollIntoView({ block: "nearest" });
+}
+
 function stopCamera() {
+  clearTimeout(walkRun.timer);
+  Object.assign(walkRun, { active: false, recording: false, frames: [] });
   if (cameraStream) cameraStream.getTracks().forEach((track) => track.stop());
   cameraStream = null;
 }
@@ -551,7 +687,9 @@ function setPath(target, path, value) {
 const clickHandlers = {
   start: startCheck,
   next: nextStep,
-  camera: toggleCamera,
+  "walk-camera": walkCamera,
+  "walk-start": walkStart,
+  "walk-stop": walkStop,
   finalize: finalizeRecord,
   delete: deleteRecord,
   copy: copyReport,

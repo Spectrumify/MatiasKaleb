@@ -25,6 +25,17 @@ function memoryAnswerLabel(answer) {
   return { correct: "Correct", incorrect: "Incorrect" }[answer] || "Not asked";
 }
 
+function describeWalk(walk) {
+  if (!walk) return ["Not done"];
+  const findings = walkFindings(walk);
+  return [
+    ...(findings.length > 0 ? findings : ["No stumble, large sway or fall picked up"]),
+    `Player tracked ${walk.trackedPercent}% of the time over ${walk.durationSec} seconds`,
+    `Largest sideways lean: ${walk.maxLeanDeg} degrees`,
+    ...(walk.reliable ? [] : ["Tracking was unreliable, so these results may be wrong"]),
+  ];
+}
+
 function buildTimeline(incident, protocol) {
   const events = [
     { at: incident.occurredAt, text: "Injury occurred" },
@@ -82,6 +93,7 @@ function buildReport(incident, protocol, recipient) {
       "Memory questions",
       protocol.memoryQuestions.map((q) => `${q.text} (${memoryAnswerLabel(incident.memory[q.id])})`)
     );
+    section("Tandem walk (camera, experimental)", describeWalk(incident.walk));
     section("Timeline", buildTimeline(incident, protocol).map((event) => `${formatTime(event.at)}: ${event.text}`));
     section("Limitations of this check", result.limitations);
     if (incident.followUp) section("Follow-up notes", [incident.followUp]);
