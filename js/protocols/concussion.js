@@ -147,9 +147,31 @@ const CONCUSSION_PROTOCOL = {
     none: "No signs or symptoms were recorded, but that does not rule out a concussion. Watch the player and remove them from play if anything appears.",
   },
 
+  // Experimental camera check. Filmed from the front so sideways sway, steps off
+  // the line and falls are visible. See js/walk.js for what is measured.
+  walkTest: {
+    intro:
+      "This camera check looks for stumbles, large sideways sway and falls during a heel-to-toe walk. " +
+      "It is experimental and has not been clinically validated. A clean walk does not rule out a concussion.",
+    safety:
+      "Skip this if the player feels dizzy, can't stand steadily, or you have any doubt about their safety. " +
+      "Have another adult walk beside them in case they lose their balance.",
+    setup: [
+      "Stand about 4 meters in front of the player, facing them.",
+      "Hold the phone upright at chest height and keep it still.",
+      "Make sure their whole body is in view, feet included, in good light.",
+    ],
+    steps: [
+      "Tap Start walk.",
+      "The player takes 5 heel-to-toe steps toward you, touching the heel of the front foot to the toes of the back foot each time.",
+      "They turn around and take 5 heel-to-toe steps back.",
+      "Tap Stop when they finish.",
+    ],
+  },
+
   limitations: [
-    "This result only reflects what was ticked during the check.",
-    "No video was analyzed. The rules behind this check are experimental and have not been clinically validated.",
+    "This result only reflects what was recorded during the check.",
+    "The rules behind this check, including the camera walk check, are experimental and have not been clinically validated.",
     "It cannot diagnose a concussion or rule one out. Only a healthcare professional can diagnose a concussion.",
   ],
 };
