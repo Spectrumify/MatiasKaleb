@@ -1,4 +1,4 @@
-# Injury Response (prototype)
+# Sauron Injury Response (prototype)
 
 A hackathon prototype for sports coaches dealing with a suspected concussion. It checks for red flags first, then walks through visible signs, symptoms, memory questions and an experimental camera tandem walk, shows what to do next, and keeps an incident record that can be shared as a report.
 
